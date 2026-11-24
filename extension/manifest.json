@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gray Swan Arena Bulk Export",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Export your own Arena chats, submissions and batches (JSON or CSV) into one zip file, with a range you choose.",
   "homepage_url": "https://github.com/Swapnil-Biswas/gray-swan-bulk-downloader",
   "icons": {

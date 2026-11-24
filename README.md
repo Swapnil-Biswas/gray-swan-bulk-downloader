@@ -54,8 +54,10 @@ and it downloads it all into **one zip file**.
 | ✂️ **Split into parts** | e.g. 1000 chats per file, so each file is small enough to upload to an AI model |
 | 🔁 **Automatic retries** | Waits and retries if the site rate-limits or a request hangs |
 | ⛔ **Cancel any time** | Stops cleanly. Nothing is saved until the export finishes |
+| 💾 **Remember settings** | Optional switch that fills in your last export's settings next time |
+| 🚦 **One export at a time** | Exports started in other tabs wait their turn, so the server isn't hit several times over |
 | 🔒 **Private** | Runs in your own tab; nothing is sent anywhere except Gray Swan's own site |
-| 🪶 **Zero dependencies** | About 530 lines of plain JavaScript, with no libraries or build step |
+| 🪶 **Zero dependencies** | About 600 lines of plain JavaScript, with no libraries or build step |
 
 ---
 
@@ -110,6 +112,15 @@ The lime **⬇ BULK EXPORT** button appears in the **bottom-right corner**.
 The panel opens and shows **how many items you have** in each tab. In this example: 10,532 chats, 1,358 submissions and 48 batches.
 
 <img src="docs/images/02-export-panel.png" alt="Bulk export panel showing Chats, Submissions and Batches with From/To ranges" width="380" align="right">
+
+**Remember settings** (the switch at the top):
+
+- **On** (default): the settings you used for your last export are filled in automatically the next time you open
+  the panel, even after closing the tab or restarting Chrome. The note next to the switch says
+  *(last settings loaded)* when this happens.
+- **Off**: the saved settings are deleted, and the panel opens with the defaults every time.
+- If you had a range set to **all**, it stays "all" as your totals grow, so it always means every item.
+- Settings are stored only in this browser. They're never sent anywhere.
 
 **Tick any of the three sections:**
 
@@ -299,6 +310,20 @@ The Arena returns at most **50 chats per request** and each request takes roughl
 
 Big JSON exports can be **hundreds of MB uncompressed**. The zip is compressed, so the download is much smaller.
 
+### Using several tabs
+
+Only **one export runs at a time** across all your Arena tabs. If you click **Download ZIP** in a second tab while
+another export is running, the log shows:
+
+```
+Another export is running in another tab. This one will start when it finishes (Cancel to stop waiting).
+```
+
+It starts on its own when the first one finishes, or you can press **Cancel** to stop waiting. This keeps the
+load on Gray Swan's servers the same however many tabs you use. Opening more tabs doesn't make exports faster
+anyway, because the server is the bottleneck. To export a lot, use **one tab** with a big range, or chunks
+one after another.
+
 ---
 
 ## How it works
@@ -350,6 +375,8 @@ Big JSON exports can be **hundreds of MB uncompressed**. The zip is compressed, 
 | **`Stopped: HTTP 404`** | The Arena probably changed an endpoint. Please [open an issue](https://github.com/Swapnil-Biswas/gray-swan-bulk-downloader/issues). |
 | **Some batch rows have `fetch_error`** | Those individual chats failed after retries. Run the export again for just those batches. |
 | **Download didn't appear** | Check Chrome's download bar or `chrome://downloads`. Chrome may ask once to allow downloads from this site. |
+| **Log says "Another export is running in another tab"** | Another Arena tab is exporting. Wait (it starts automatically) or press Cancel. If no other export is running, close any other Arena tabs and try again. |
+| **My settings didn't come back** | Check the **Remember settings** switch is on. Settings are saved when you click **Download ZIP**. Private/Incognito windows forget them when closed. |
 | **Tab froze on a huge export** | Export in chunks (e.g. `1–5000`, then `5001–10000`) and/or use **Split every**. |
 | **`chrome://extensions` says "Manifest file is missing"** | You picked the wrong folder. Pick the inner **`extension`** folder. |
 

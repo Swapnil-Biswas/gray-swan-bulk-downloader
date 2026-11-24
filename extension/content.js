@@ -10,6 +10,14 @@
 
   let cancelled = false;
 
+  const SETTINGS_KEY = 'gsBulkExport:settings';
+  const REMEMBER_KEY = 'gsBulkExport:remember';
+  const settingsStore = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked or full: ignore */ } },
+    del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
+  };
+
   // ---------- networking ----------
   async function getJSON(url, tries = 6) {
     let lastErr;
@@ -312,13 +320,44 @@
     return true;
   }
 
+  // Only one export runs at a time across all Arena tabs in this browser (Web Locks API),
+  // so opening the tool in several tabs never multiplies the load on the server.
+  const LOCK_NAME = 'gs-bulk-export';
+  let waitAbort = null;
+
   async function runExport(opts, ui = { progress() {}, log() {} }) {
     cancelled = false;
+    if (!navigator.locks) return doExport(opts, ui);
+    const now = await navigator.locks.request(LOCK_NAME, { ifAvailable: true }, async (lock) => (lock ? { result: await doExport(opts, ui) } : null));
+    if (now) return now.result;
+    ui.log('Another export is running in another tab. This one will start when it finishes (Cancel to stop waiting).');
+    ui.progress(0, 0, 'waiting for the other tab');
+    waitAbort = new AbortController();
+    try {
+      return await navigator.locks.request(LOCK_NAME, { signal: waitAbort.signal }, async () => {
+        waitAbort = null;
+        ui.log('The other export finished. Starting now.');
+        return doExport(opts, ui);
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw new Error('Cancelled');
+      throw e;
+    } finally {
+      waitAbort = null;
+    }
+  }
+
+  function cancelExport() {
+    cancelled = true;
+    if (waitAbort) waitAbort.abort();
+  }
+
+  async function doExport(opts, ui) {
     const slug = opts.slug || slugFromUrl();
     if (!slug) throw new Error('Open a challenge page first (URL must contain /arena/challenge/<name>).');
     const base = `/arena/challenge/${slug}/`;
     const files = [];
-    const manifest = { tool: 'Gray Swan Arena Bulk Export 1.0', challenge: slug, exported_at: new Date().toISOString(), format: opts.format, options: { ...opts }, counts: {} };
+    const manifest = { tool: 'Gray Swan Arena Bulk Export 1.1', challenge: slug, exported_at: new Date().toISOString(), format: opts.format, options: { ...opts }, counts: {} };
     const wantJSON = opts.format === 'json' || opts.format === 'both';
     const wantCSV = opts.format === 'csv' || opts.format === 'both';
 
@@ -404,6 +443,13 @@
   #gsx-panel .bar>div{height:100%;width:0;background:#d7ff3a;transition:width .2s}
   #gsx-panel .log{margin-top:8px;max-height:130px;overflow:auto;background:#0f1011;border-radius:4px;padding:6px 8px;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#b9bec2;white-space:pre-wrap}
   #gsx-panel .x{float:right;background:none;border:0;color:#aaa;font-size:16px;cursor:pointer}
+  #gsx-panel .remember{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:#c9cdd0;cursor:pointer;user-select:none}
+  #gsx-panel .remember input{position:absolute;opacity:0;width:0;height:0}
+  #gsx-panel .remember .sw{position:relative;width:30px;height:16px;border-radius:8px;background:#3a3d3f;transition:background .15s;flex:none}
+  #gsx-panel .remember .sw::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#c9cdd0;transition:transform .15s}
+  #gsx-panel .remember input:checked + .sw{background:#d7ff3a}
+  #gsx-panel .remember input:checked + .sw::after{transform:translateX(14px);background:#111}
+  #gsx-panel .remember input:focus-visible + .sw{outline:2px solid #d7ff3a;outline-offset:2px}
   `;
 
   function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
@@ -414,6 +460,9 @@
       <button class="x" title="Close">✕</button>
       <h3>BULK EXPORT</h3>
       <div class="sub" data-k="slug"></div>
+      <label class="remember" title="When on, the settings from your last export are filled in automatically next time. Turning it off deletes the saved settings.">
+        <input type="checkbox" data-k="remember"><span class="sw"></span> Remember settings <span class="muted" data-k="rememberNote"></span>
+      </label>
 
       <fieldset><legend><label><input type="checkbox" data-k="chats" checked> Chats <span class="muted" data-k="tc"></span></label></legend>
         <div class="row">From # <input type="number" min="1" data-k="cFrom" value="1"> to # <input type="number" min="1" data-k="cTo"></div>
@@ -458,7 +507,42 @@
     const T = { chats: 0, submissions: 0, batches: 0 };
 
     const log = (m) => { const L = $('log'); L.textContent += (L.textContent ? '\n' : '') + `[${new Date().toLocaleTimeString()}] ${m}`; L.scrollTop = L.scrollHeight; };
-    const progress = (d, t, what) => { p.querySelector('.bar>div').style.width = `${t ? Math.round((d / t) * 100) : 0}%`; $('status').textContent = `${what}: ${d}/${t}`; };
+    const progress = (d, t, what) => { p.querySelector('.bar>div').style.width = `${t ? Math.round((d / t) * 100) : 0}%`; $('status').textContent = t ? `${what}: ${d}/${t}` : what; };
+
+    // ---- remembered settings (kept in this site's localStorage, never sent anywhere) ----
+    const fmtRadio = (v) => p.querySelector(`input[name="gsx-fmt"][value="${v}"]`);
+    function collectSettings() {
+      const to = (k, total) => (total && Number($(k).value) >= total ? 'all' : $(k).value); // "all" keeps meaning all as totals grow
+      return {
+        chats: $('chats').checked, cFrom: $('cFrom').value, cTo: to('cTo', T.chats),
+        subs: $('subs').checked, sFrom: $('sFrom').value, sTo: to('sTo', T.submissions),
+        batches: $('batches').checked, bFrom: $('bFrom').value, bTo: to('bTo', T.batches), bTx: $('bTx').checked,
+        after: $('after').value, before: $('before').value,
+        format: p.querySelector('input[name="gsx-fmt"]:checked').value, msgCsv: $('msgCsv').checked,
+        perFile: $('perFile').value, conc: $('conc').value, delay: $('delay').value,
+      };
+    }
+    function applySettings(s) {
+      for (const k of ['chats', 'subs', 'batches', 'bTx', 'msgCsv']) if (typeof s[k] === 'boolean') $(k).checked = s[k];
+      for (const k of ['cFrom', 'sFrom', 'bFrom', 'after', 'before', 'perFile', 'conc', 'delay']) if (s[k] != null) $(k).value = s[k];
+      for (const k of ['cTo', 'sTo', 'bTo']) if (s[k] != null) $(k).value = s[k] === 'all' ? '' : s[k]; // empty → filled with the current total
+      if (s.format && fmtRadio(s.format)) fmtRadio(s.format).checked = true;
+    }
+    const rememberOn = () => settingsStore.get(REMEMBER_KEY) !== false; // on by default
+    $('remember').checked = rememberOn();
+    const saved = rememberOn() ? settingsStore.get(SETTINGS_KEY) : null;
+    if (saved) { applySettings(saved); $('rememberNote').textContent = '(last settings loaded)'; }
+    $('remember').addEventListener('change', () => {
+      if ($('remember').checked) {
+        settingsStore.set(REMEMBER_KEY, true);
+        settingsStore.set(SETTINGS_KEY, collectSettings());
+        $('rememberNote').textContent = '(saved)';
+      } else {
+        settingsStore.set(REMEMBER_KEY, false);
+        settingsStore.del(SETTINGS_KEY);
+        $('rememberNote').textContent = '(saved settings cleared)';
+      }
+    });
 
     async function refreshTotals() {
       const slug = slugFromUrl();
@@ -481,7 +565,7 @@
       $(`${which}To`).value = n === 'all' ? tot : Math.min(Number(n), tot || Number(n));
     }));
     p.querySelector('.x').addEventListener('click', () => p.remove());
-    p.querySelector('.cancel').addEventListener('click', () => { cancelled = true; log('Cancelling…'); });
+    p.querySelector('.cancel').addEventListener('click', () => { cancelExport(); log('Cancelling…'); });
 
     const range = (fk, tk, total) => {
       const from = Math.max(1, Number($(fk).value) || 1);
@@ -505,6 +589,7 @@
         delay: Math.max(0, Number($('delay').value) || 0),
       };
       if (!opts.chats && !opts.submissions && !opts.batches) { log('Tick at least one of Chats, Submissions or Batches.'); return; }
+      if ($('remember').checked) { settingsStore.set(SETTINGS_KEY, collectSettings()); $('rememberNote').textContent = '(saved)'; }
       go.disabled = true; cancel.disabled = false;
       try { await runExport(opts, { progress, log }); }
       catch (e) { log(`Stopped: ${e.message || e}`); }
@@ -528,6 +613,6 @@
     document.body.appendChild(btn);
   }
 
-  window.__gsExport = { runExport, totals, unflatten, makeZip, cancel: () => { cancelled = true; } };
+  window.__gsExport = { runExport, totals, unflatten, makeZip, cancel: cancelExport };
   mount();
 })();
