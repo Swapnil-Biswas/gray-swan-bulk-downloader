@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches manifest version
+        run: |
+          v=$(node -p 'require("./extension/manifest.json").version')
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match manifest version v$v"; exit 1; }
+
+      - name: Package extension
+        run: |
+          mkdir -p dist
+          cd extension && zip -r "../dist/gray-swan-bulk-export-${GITHUB_REF_NAME}.zip" . -x '.*'
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Download the zip below, extract it, then in chrome://extensions turn on Developer mode → Load unpacked → pick the extracted folder. See CHANGELOG.md for what's new."

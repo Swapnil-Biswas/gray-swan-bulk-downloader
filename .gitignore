@@ -1,0 +1,21 @@
+# Exports: never commit your chat data
+grayswan_*.zip
+*.export.json
+
+# Build output
+dist/
+*.crx
+*.pem
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Node (if tooling is added later)
+node_modules/
+
+# Local assistant settings
+.claude/

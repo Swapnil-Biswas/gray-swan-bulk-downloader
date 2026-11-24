@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: JavaScript syntax check
+        run: node --check extension/content.js
+
+      - name: Validate manifest
+        run: |
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("extension/manifest.json", "utf8"));
+            const fail = (msg) => { console.error("manifest: " + msg); process.exit(1); };
+            if (m.manifest_version !== 3) fail("manifest_version must be 3");
+            if (!/^\d+\.\d+\.\d+$/.test(m.version)) fail("version must be x.y.z");
+            if (m.permissions?.length || m.host_permissions?.length) fail("no extension permissions expected; update CI if this is intentional");
+            for (const p of Object.values(m.icons || {})) if (!fs.existsSync("extension/" + p)) fail("missing icon " + p);
+            for (const cs of m.content_scripts || []) for (const js of cs.js) if (!fs.existsSync("extension/" + js)) fail("missing script " + js);
+            console.log("manifest OK: v" + m.version);
+          '
+
+      - name: Version matches CHANGELOG
+        run: |
+          v=$(node -p 'require("./extension/manifest.json").version')
+          grep -q "## \[$v\]" CHANGELOG.md || { echo "CHANGELOG.md has no entry for $v"; exit 1; }
